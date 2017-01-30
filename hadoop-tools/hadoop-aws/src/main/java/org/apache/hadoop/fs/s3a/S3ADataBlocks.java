@@ -758,7 +758,13 @@ final class S3ADataBlocks {
         break;
 
       case Closed:
-        // no-op
+        if (bufferFile.exists()) {
+          LOG.debug("Deleting buffer file {} after completion", bufferFile);
+          boolean deleted = bufferFile.delete();
+          if (!deleted && bufferFile.exists()) {
+            LOG.warn("Failed to delete buffer file {}", bufferFile);
+          }
+        }
         break;
 
       default:
