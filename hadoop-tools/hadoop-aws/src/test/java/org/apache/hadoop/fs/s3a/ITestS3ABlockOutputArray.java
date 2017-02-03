@@ -65,9 +65,9 @@ public class ITestS3ABlockOutputArray extends AbstractS3ATestBase {
   }
 
   @Test(expected = IOException.class)
-  public void testDoubleStreamClose() throws Throwable {
-    Path dest = path("testDoubleStreamClose");
-    describe(" testDoubleStreamClose");
+  public void testWriteAfterStreamClose() throws Throwable {
+    Path dest = path("testWriteAfterStreamClose");
+    describe(" testWriteAfterStreamClose");
     FSDataOutputStream stream = getFileSystem().create(dest, true);
     byte[] data = ContractTestUtils.dataset(16, 'a', 26);
     try {
@@ -77,6 +77,24 @@ public class ITestS3ABlockOutputArray extends AbstractS3ATestBase {
     } finally {
       IOUtils.closeStream(stream);
     }
+  }
+
+  @Test()
+  public void testBlocksClosed() throws Throwable {
+    Path dest = path("testBlocksClosed");
+    describe(" testBlocksClosed");
+    FSDataOutputStream stream = getFileSystem().create(dest, true);
+    S3AInstrumentation.OutputStreamStatistics statistics
+        = S3ATestUtils.getOutputStreamStatistics(stream);
+    byte[] data = ContractTestUtils.dataset(16, 'a', 26);
+    stream.write(data);
+    LOG.info("closing output stream");
+    stream.close();
+    assertEquals("total allocated blocks in " + statistics,
+        1, statistics.blocksAllocated());
+    assertEquals("actively allocated blocks in " + statistics,
+        0, statistics.blocksActivelyAllocated());
+    LOG.info("end of test case");
   }
 
   public void verifyUpload(String name, int fileSize) throws IOException {

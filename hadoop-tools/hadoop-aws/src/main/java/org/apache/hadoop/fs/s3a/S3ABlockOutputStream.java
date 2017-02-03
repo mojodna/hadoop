@@ -48,7 +48,6 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
-import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.retry.RetryPolicies;
 import org.apache.hadoop.io.retry.RetryPolicy;
 import org.apache.hadoop.util.Progressable;
@@ -178,10 +177,10 @@ class S3ABlockOutputStream extends OutputStream {
     if (activeBlock == null) {
       blockCount++;
       if (blockCount>= Constants.MAX_MULTIPART_COUNT) {
-        LOG.error("Number of partitions in stream exceeds limit for S3: " +
+        LOG.error("Number of partitions in stream exceeds limit for S3: "
              + Constants.MAX_MULTIPART_COUNT +  " write may fail.");
       }
-      activeBlock = blockFactory.create(this.blockSize);
+      activeBlock = blockFactory.create(blockCount, this.blockSize, statistics);
     }
     return activeBlock;
   }
@@ -206,7 +205,9 @@ class S3ABlockOutputStream extends OutputStream {
    * Clear the active block.
    */
   private void clearActiveBlock() {
-    LOG.debug("Clearing active block");
+    if (activeBlock != null) {
+      LOG.debug("Clearing active block");
+    }
     synchronized (this) {
       activeBlock = null;
     }
@@ -356,11 +357,9 @@ class S3ABlockOutputStream extends OutputStream {
       writeOperationHelper.writeFailed(ioe);
       throw ioe;
     } finally {
-      LOG.debug("Closing block and factory");
-      IOUtils.closeStream(block);
-      IOUtils.closeStream(blockFactory);
+      closeCloseables(LOG, block, blockFactory);
       LOG.debug("Statistics: {}", statistics);
-      IOUtils.closeStream(statistics);
+      closeCloseables(LOG, statistics);
       clearActiveBlock();
     }
     // All end of write operations, including deleting fake parent directories
@@ -392,8 +391,15 @@ class S3ABlockOutputStream extends OutputStream {
         executorService.submit(new Callable<PutObjectResult>() {
           @Override
           public PutObjectResult call() throws Exception {
-            PutObjectResult result = fs.putObjectDirect(putObjectRequest);
-            block.close();
+            PutObjectResult result;
+            try {
+              // the put object call automatically closes the input
+              // stream afterwards.
+              result = writeOperationHelper.putObject( putObjectRequest);
+              block.close();
+            } finally {
+              closeCloseables(LOG, block);
+            }
             return result;
           }
         });
@@ -434,6 +440,14 @@ class S3ABlockOutputStream extends OutputStream {
    */
   private long now() {
     return System.currentTimeMillis();
+  }
+
+  /**
+   * Get the statistics for this stream.
+   * @return stream statistics
+   */
+  S3AInstrumentation.OutputStreamStatistics getStatistics() {
+    return statistics;
   }
 
   /**
@@ -482,12 +496,17 @@ class S3ABlockOutputStream extends OutputStream {
               LOG.debug("Uploading part {} for id '{}'", currentPartNumber,
                   uploadId);
               // do the upload
-              PartETag partETag = fs.uploadPart(request).getPartETag();
-              LOG.debug("Completed upload of {}", block);
-              LOG.debug("Stream statistics of {}", statistics);
+              PartETag partETag;
+              try {
+                partETag = fs.uploadPart(request).getPartETag();
+                LOG.debug("Completed upload of {} to part {}", block,
+                    partETag.getETag());
+                LOG.debug("Stream statistics of {}", statistics);
+              } finally {
+                // close the stream and block
+                closeCloseables(LOG, uploadStream, block);
+              }
 
-              // close the block
-              block.close();
               return partETag;
             }
           });

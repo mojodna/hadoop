@@ -1038,12 +1038,16 @@ public class S3AFileSystem extends FileSystem {
   }
 
   /**
-   * PUT an object, incrementing the put requests and put bytes
+   * Start a transfer-manager managed async PUT of an object,
+   * incrementing the put requests and put bytes
    * counters.
    * It does not update the other counters,
    * as existing code does that as progress callbacks come in.
    * Byte length is calculated from the file length, or, if there is no
    * file, from the content length of the header.
+   * Because the operation is async, any stream supplied in the request
+   * must reference data (files, buffers) which stay valid until the upload
+   * completes.
    * @param putObjectRequest the request
    * @return the upload initiated
    */
@@ -1069,6 +1073,7 @@ public class S3AFileSystem extends FileSystem {
    * PUT an object directly (i.e. not via the transfer manager).
    * Byte length is calculated from the file length, or, if there is no
    * file, from the content length of the header.
+   * <i>Important: this call will close any input stream in the request.</i>
    * @param putObjectRequest the request
    * @return the upload initiated
    * @throws AmazonClientException on problems
@@ -1094,7 +1099,8 @@ public class S3AFileSystem extends FileSystem {
 
   /**
    * Upload part of a multi-partition file.
-   * Increments the write and put counters
+   * Increments the write and put counters.
+   * <i>Important: this call does not close any input stream in the request.</i>
    * @param request request
    * @return the result of the operation.
    * @throws AmazonClientException on problems
@@ -2260,6 +2266,8 @@ public class S3AFileSystem extends FileSystem {
       Preconditions.checkNotNull(partETags);
       Preconditions.checkArgument(!partETags.isEmpty(),
           "No partitions have been uploaded");
+      LOG.debug("Completing multipart upload {} with {} parts",
+          uploadId, partETags.size());
       return s3.completeMultipartUpload(
           new CompleteMultipartUploadRequest(bucket,
               key,
@@ -2274,6 +2282,7 @@ public class S3AFileSystem extends FileSystem {
      * @throws AmazonClientException on problems.
      */
     void abortMultipartUpload(String uploadId) throws AmazonClientException {
+      LOG.debug("Aborting multipart upload {}", uploadId);
       s3.abortMultipartUpload(
           new AbortMultipartUploadRequest(bucket, key, uploadId));
     }
@@ -2292,7 +2301,7 @@ public class S3AFileSystem extends FileSystem {
         int size) {
       Preconditions.checkNotNull(uploadId);
       Preconditions.checkNotNull(uploadStream);
-      Preconditions.checkArgument(size > 0, "Invalid partition size %s", size);
+      Preconditions.checkArgument(size >= 0, "Invalid partition size %s", size);
       Preconditions.checkArgument(partNumber> 0 && partNumber <=10000,
           "partNumber must be between 1 and 10000 inclusive, but is %s",
           partNumber);
@@ -2319,6 +2328,23 @@ public class S3AFileSystem extends FileSystem {
       sb.append(", key='").append(key).append('\'');
       sb.append('}');
       return sb.toString();
+    }
+
+    /**
+     * PUT an object directly (i.e. not via the transfer manager).
+     * Byte length is calculated from the file length, or, if there is no
+     * file, from the content length of the header.
+     * @param putObjectRequest the request
+     * @return the upload initiated
+     * @throws IOException on problems
+     */
+    public PutObjectResult putObject(PutObjectRequest putObjectRequest)
+        throws IOException {
+      try {
+        return putObjectDirect(putObjectRequest);
+      } catch (AmazonClientException e) {
+        throw translateException("put", putObjectRequest.getKey(), e);
+      }
     }
   }
 
