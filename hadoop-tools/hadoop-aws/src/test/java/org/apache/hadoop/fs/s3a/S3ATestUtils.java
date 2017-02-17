@@ -20,6 +20,7 @@ package org.apache.hadoop.fs.s3a;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileContext;
 import org.apache.hadoop.fs.Path;
 import org.junit.Assert;
@@ -29,6 +30,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.net.URI;
 import java.util.List;
 
@@ -543,5 +545,17 @@ public final class S3ATestUtils {
       LOG.warn(message);
     }
     Assume.assumeTrue(message, condition);
+  }
+
+  /**
+   * Get the statistics from a wrapped block output stream
+   * @param out output stream
+   * @return the (active) stats of the write
+   */
+  public static S3AInstrumentation.OutputStreamStatistics getOutputStreamStatistics(
+      FSDataOutputStream out) {
+    S3ABlockOutputStream blockOutputStream
+        = (S3ABlockOutputStream) out.getWrappedStream();
+    return blockOutputStream.getStatistics();
   }
 }
